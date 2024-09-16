@@ -1,0 +1,114 @@
+# Maven package Java project Web App to Linux on Azure
+# Build your Java project and deploy it to Azure as a Linux web app
+# Add steps that analyze code, save build artifacts, deploy, and more:
+# https://docs.microsoft.com/azure/devops/pipelines/languages/java
+
+trigger:
+- pipeline_maven
+
+variables:
+
+  # Web app name
+  webAppName: 'webgoat-1495910'
+
+  # Environment name
+  environmentName: 'webgoat-1495910'
+
+  # Agent VM image name
+  vmImageName: 'ubuntu-latest'
+
+stages:
+- stage: Build
+  displayName: Build stage
+  jobs:
+  - job: MavenPackageAndPublishArtifacts
+    displayName: Maven Package and Publish Artifacts
+    pool:
+      vmImage: $(vmImageName)
+
+    steps:
+
+    - task: Bash@3
+      displayName: Git Clone
+      inputs:
+        targetType: 'inline'
+        script: 'git clone  https://github.com/WebGoat/WebGoat.git'
+    - task: Bash@3
+      displayName: 'Build app'
+      inputs:
+        targetType: 'inline'
+        script: |
+         cd WebGoat    
+
+    - task: Maven@3
+      displayName: 'Maven Package'
+      inputs:
+        mavenPomFile: 'WebGoat/pom.xml'
+        javaHomeOption: JDKVersion
+        jdkVersionOption: 1.17
+
+    - task: CopyFiles@2
+      displayName: 'Copy Files to artifact staging directory'
+      inputs:
+        SourceFolder: '$(System.DefaultWorkingDirectory)'
+        Contents: '**/target/*.?(war|jar)'
+        TargetFolder: $(Build.ArtifactStagingDirectory)
+
+    - upload: $(Build.ArtifactStagingDirectory)
+      artifact: drop
+
+    - task: Bash@3
+      displayName: 'Analise SAST'
+      inputs:
+        targetType: 'inline'
+        script: |
+         curl -fsSl https://raw.githubusercontent.com/ZupIT/horusec/main/deployments/scripts/install.sh | bash -s latest 
+         horusec start -D -p ./WebGoat -o="sarif" -O="$(Build.ArtifactStagingDirectory)/results.sarif"
+              
+    - task: PublishBuildArtifacts@1
+      displayName: 'Upload Relatorio SAST'
+      inputs:
+        PathtoPublish: '$(Build.ArtifactStagingDirectory)/results.sarif'
+        ArtifactName: 'CodeAnalysisLogs'
+        publishLocation: 'Container'
+    
+    - script: |
+        echo "Download OWASP ZAP..."
+        docker pull zaproxy/zap-stable
+        echo "Running ZAP Scan..."
+        docker run -u 0 -v $(System.DefaultWorkingDirectory)/zaproxy:/zap/wrk/:rw zaproxy/zap-stable zap-full-scan.py -t http://$(webAppName).azurewebsites.net:80 -J /zap/wrk/report.json -r /zap/wrk/report.html
+      displayName: 'OWASP ZAP Scan'
+
+    - publish: $(Build.ArtifactStagingDirectory)
+      artifact: ZapReport
+
+
+
+- stage: Deploy
+  displayName: Deploy stage
+  dependsOn: Build
+  condition: succeeded()
+  jobs:
+  - deployment: DeployLinuxWebApp
+    displayName: Deploy Linux Web App
+    environment: $(environmentName)
+    pool:
+      vmImage: $(vmImageName)
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - task: AzureWebApp@1
+            displayName: 'Azure Web App Deploy: webgoat-1495910'
+            inputs:
+              azureSubscription: $(azureSubscription)
+              appType: webAppLinux
+              appName: $(webAppName)
+              package: '$(Pipeline.Workspace)/drop/**/target/*.?(war|jar)'
+              startUpcommand: ./mvnw clean install
+                              ./mvnw spring-boot:run -Dserver.port=80
+
+
+
+
+      
