@@ -6,20 +6,6 @@
 trigger:
 - pipeline_maven
 
-variables:
-
-  # Azure Resource Manager connection created during pipeline creation
-  azureSubscription: '730d9017-25a3-4010-bf79-d9d813ff4d86'
-
-  # Web app name
-  webAppName: 'webgoat-1495910'
-
-  # Environment name
-  environmentName: 'webgoat-1495910'
-
-  # Agent VM image name
-  vmImageName: 'ubuntu-latest'
-
 stages:
 - stage: Build
   displayName: Build stage
